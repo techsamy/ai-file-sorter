@@ -21,7 +21,7 @@ export const StatsBar: React.FC<StatsBarProps> = ({
   ];
 
   return (
-    <div className="flex flex-wrap items-center justify-center gap-3 py-3 px-4 bg-surface-card/60 backdrop-blur-md border border-surface-border rounded-2xl max-w-4xl mx-auto shadow-lg shadow-black/20">
+    <div className="flex flex-wrap items-center justify-center gap-3 py-3 px-5 bg-surface-card/60 backdrop-blur-md border border-surface-border rounded-2xl max-w-5xl xl:max-w-6xl w-full mx-auto shadow-lg shadow-black/20">
       {stats.map((s, idx) => (
         <div key={idx} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface/80 border border-surface-border/50 text-xs sm:text-sm">
           <span

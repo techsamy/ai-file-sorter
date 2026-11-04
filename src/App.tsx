@@ -42,9 +42,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Play,
-  Upload,
   Download,
-  Info,
   RefreshCw,
   HelpCircle,
 } from 'lucide-react';
@@ -142,7 +140,7 @@ export const App: React.FC = () => {
     });
   }, [aiStatus.status]);
 
-  // Handle assigning an item to a category card (Idempotent, strictly prevents duplicate counts)
+  // Handle assigning an item to a category card (Card starts with count=0; count only increments upon landing)
   const assignToCard = useCallback((
     item: ScannedItem,
     section: 'photos' | 'videos' | 'files' | 'dupes',
@@ -160,10 +158,6 @@ export const App: React.FC = () => {
       const existingCard = next.get(cardKey);
 
       if (!existingCard) {
-        const initialSlots = Array(6).fill(null);
-        initialSlots[0] = item.id;
-        item.slotIndex = 0;
-
         next.set(cardKey, {
           key: cardKey,
           section,
@@ -172,39 +166,88 @@ export const App: React.FC = () => {
           color,
           dest,
           items: [item],
-          slots: initialSlots,
+          landed: [], // starts empty until particle physically lands!
+          slots: Array(6).fill(null), // starts empty!
         });
-        return next;
-      }
-
-      // Check if item is already in card to guarantee accurate file counts
-      if (!existingCard.items.some((it) => it.id === item.id)) {
-        const newItems = [...existingCard.items, item];
-        const newSlots = [...existingCard.slots];
-        const emptyIndex = newSlots.findIndex((s) => s === null);
-        if (emptyIndex !== -1) {
-          newSlots[emptyIndex] = item.id;
-          item.slotIndex = emptyIndex;
-        } else {
-          // If all 6 preview slots are full, item still belongs to this card
-          item.slotIndex = undefined;
+      } else {
+        if (!existingCard.items.some((it) => it.id === item.id)) {
+          next.set(cardKey, {
+            ...existingCard,
+            items: [...existingCard.items, item],
+          });
         }
-
-        next.set(cardKey, {
-          ...existingCard,
-          items: newItems,
-          slots: newSlots,
-        });
       }
 
       return next;
     });
 
-    // Launch item sprite from vortex to card
+    // Launch item sprite from central vortex towards the card
     if (vortexRef.current) {
       vortexRef.current.launchSprite(item.id);
     }
   }, []);
+
+  // On particle land callback (Increments card count and fills slot when the sprite hits the card)
+  const handleParticleLand = useCallback((id: string) => {
+    const item = items.get(id);
+    if (!item || !item.cardKey) return;
+
+    setCards((prev) => {
+      const card = prev.get(item.cardKey!);
+      if (!card) return prev;
+
+      if (card.landed.includes(id)) return prev;
+
+      const newLanded = [...card.landed, id];
+      const newSlots = [...card.slots];
+
+      // Fill the first empty preview slot
+      const emptySlotIdx = newSlots.findIndex((s) => s === null);
+      if (emptySlotIdx !== -1) {
+        newSlots[emptySlotIdx] = id;
+      }
+
+      const next = new Map(prev);
+      next.set(item.cardKey!, {
+        ...card,
+        landed: newLanded,
+        slots: newSlots,
+        flash: performance.now(),
+      });
+      return next;
+    });
+  }, [items]);
+
+  // Flight destination coordinate locator for canvas vortex
+  const getTargetLocation = useCallback((id: string) => {
+    const item = items.get(id);
+    if (!item || !item.cardKey) return null;
+
+    const card = cards.get(item.cardKey);
+    let targetEl: Element | null = null;
+
+    if (card) {
+      // Find the next empty preview slot to fly directly into
+      const nextEmptySlot = card.slots.findIndex((s) => s === null);
+      if (nextEmptySlot !== -1) {
+        targetEl = document.querySelector(`[data-card="${item.cardKey}"] [data-slot="${nextEmptySlot}"]`);
+      }
+    }
+
+    // Fallback directly to category card box
+    if (!targetEl) {
+      targetEl = document.querySelector(`[data-card="${item.cardKey}"]`);
+    }
+
+    if (!targetEl) return null;
+
+    const rect = targetEl.getBoundingClientRect();
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+      size: Math.min(rect.width, rect.height),
+    };
+  }, [items, cards]);
 
   // Run the full sorting pipeline
   const runSortingPipeline = async (scannedFiles: ScannedItem[]) => {
@@ -219,7 +262,7 @@ export const App: React.FC = () => {
     // 1. Detect duplicates
     const duplicateSet = await detectDuplicates(scannedFiles);
 
-    // 2. Process thumbnails and assign sprites
+    // 2. Process thumbnails and assign sprites to central vortex
     for (const item of scannedFiles) {
       if (item.kind === 'photo') {
         try {
@@ -252,23 +295,22 @@ export const App: React.FC = () => {
 
     // 3. Classify and route each file
     for (const item of scannedFiles) {
-      // Duplicates go to Duplicates folder
       if (duplicateSet.has(item.id)) {
         assignToCard(item, 'dupes', 'duplicates', 'Duplicates', '#f43f5e', ['Duplicates']);
+        await new Promise((r) => setTimeout(r, 25));
         continue;
       }
 
-      // Screenshots filename check
       if (SCREENSHOT_REGEX.test(item.name)) {
         if (item.kind === 'video') {
           assignToCard(item, 'videos', 'screen_recordings', 'Screen recordings', '#0ea5e9', ['Videos', 'Screen recordings']);
         } else {
           assignToCard(item, 'photos', 'screens', 'Screenshots', '#0ea5e9', ['Photos', 'Screenshots']);
         }
+        await new Promise((r) => setTimeout(r, 25));
         continue;
       }
 
-      // Photos & Videos: AI Classification
       if (item.kind === 'photo' || item.kind === 'video') {
         let matchedCatKey: string | null = null;
         let score = 0;
@@ -299,7 +341,6 @@ export const App: React.FC = () => {
           [sectionTitle, item.categoryLabel]
         );
       } else {
-        // Non-media rule based classification
         const ruleCat = matchRuleCategory(item.name, item.ext);
         item.category = ruleCat.key;
         item.categoryLabel = ruleCat.label;
@@ -314,18 +355,20 @@ export const App: React.FC = () => {
         );
       }
 
-      // Small delay for natural progressive flow
-      await new Promise((r) => setTimeout(r, 20));
+      await new Promise((r) => setTimeout(r, 25));
     }
 
-    // Cleanly drain all particles from the central vortex into destination cards
+    // Drain all remaining particles cleanly into cards
     vortexRef.current?.drainAll();
+
+    // Wait for all particles to land
+    await new Promise((r) => setTimeout(r, 700));
 
     setAppState('review');
     setNotification('Sorting complete! Review the categories below and proceed.');
   };
 
-  // Handler for Native Directory Picker (Chrome/Edge on localhost or HTTPS)
+  // Handler for Directory Picker
   const handlePickDirectory = async (startFolder?: string) => {
     setErrorMessage('');
     try {
@@ -361,14 +404,14 @@ export const App: React.FC = () => {
       console.error(err);
       setAppState('idle');
       if (err?.message === 'FileSystemAccessUnsupported' || err?.name === 'SecurityError') {
-        setErrorMessage('Native file access blocked. Use the "Browse via OS Dialog" button below.');
+        fileInputRef.current?.click();
       } else {
         setErrorMessage('Could not open folder: ' + (err?.message || err));
       }
     }
   };
 
-  // Handler for Universal Folder Input (<input type="file" webkitdirectory />)
+  // Handler for Universal Folder Input
   const handleUniversalFolderChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
@@ -522,53 +565,18 @@ export const App: React.FC = () => {
     vortexRef.current?.clear();
   };
 
-  // Coordinates locator for canvas particle landing
-  // FALLBACK: If slotIndex is undefined (files 7 onwards), targets the card element itself!
-  const getTargetLocation = useCallback((id: string) => {
-    const item = items.get(id);
-    if (!item || !item.cardKey) return null;
-
-    let el: Element | null = null;
-    if (item.slotIndex !== undefined) {
-      el = document.querySelector(
-        `[data-card="${item.cardKey}"] [data-slot="${item.slotIndex}"]`
-      );
-    }
-
-    // Fallback directly to the category card container
-    if (!el) {
-      el = document.querySelector(`[data-card="${item.cardKey}"]`);
-    }
-
-    if (!el) return null;
-
-    const rect = el.getBoundingClientRect();
-    return {
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2,
-      size: Math.min(rect.width, rect.height),
-    };
-  }, [items]);
-
-  // On particle land callback
-  const handleParticleLand = useCallback((id: string) => {
-    const item = items.get(id);
-    if (!item || !item.cardKey) return;
-
-    setCards((prev) => {
-      const card = prev.get(item.cardKey!);
-      if (!card) return prev;
-      return new Map(prev.set(item.cardKey!, { ...card, flash: performance.now() }));
-    });
-  }, [items]);
-
-  // Exact mathematically derived stats
+  // Dynamic landed counts (These start at 0 and tick up live as sprites hit their cards!)
   const totalLoose = items.size;
-  const totalMedia = Array.from(items.values()).filter(
-    (i) => i.kind === 'photo' || i.kind === 'video'
-  ).length;
-  const totalFolders = cards.size;
-  const totalDupes = Array.from(items.values()).filter((i) => i.isDuplicate).length;
+  const landedMediaCount = Array.from(cards.values())
+    .filter((c) => c.section === 'photos' || c.section === 'videos')
+    .reduce((sum, c) => sum + (c.landed ? c.landed.length : 0), 0);
+
+  const foldersCreatedCount = Array.from(cards.values())
+    .filter((c) => c.landed && c.landed.length > 0).length;
+
+  const landedDupesCount = Array.from(cards.values())
+    .filter((c) => c.section === 'dupes')
+    .reduce((sum, c) => sum + (c.landed ? c.landed.length : 0), 0);
 
   const photoCards = Array.from(cards.values()).filter((c) => c.section === 'photos');
   const videoCards = Array.from(cards.values()).filter((c) => c.section === 'videos');
@@ -607,7 +615,7 @@ export const App: React.FC = () => {
       {/* Drag Overlay Hint */}
       {isDragOver && (
         <div className="fixed inset-0 z-50 bg-brand-950/80 backdrop-blur-md flex flex-col items-center justify-center pointer-events-none border-4 border-dashed border-brand-400">
-          <Upload className="w-16 h-16 text-brand-300 animate-bounce mb-4" />
+          <FolderOpen className="w-16 h-16 text-brand-300 animate-bounce mb-4" />
           <h2 className="text-2xl font-bold text-white">Drop your folder here</h2>
           <p className="text-zinc-300 text-sm mt-1">We will scan and organize it with local AI</p>
         </div>
@@ -628,23 +636,23 @@ export const App: React.FC = () => {
                 <ShieldCheck className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-zinc-100">Chrome "Upload files?" Warning Explained</h3>
-                <p className="text-xs text-zinc-400">Why does your browser show this security popup?</p>
+                <h3 className="text-base font-bold text-zinc-100">Why does your browser mention "Upload"?</h3>
+                <p className="text-xs text-zinc-400">Browser Security Dialog Explained</p>
               </div>
             </div>
 
             <div className="text-xs sm:text-sm text-zinc-300 space-y-2.5 leading-relaxed bg-surface/60 p-4 rounded-xl border border-surface-border/50">
               <p>
-                <strong>1. It is a standard browser security label:</strong> Whenever any webpage asks to read an entire folder on your computer via HTML file selection, Chromium browsers automatically display:
+                <strong>1. Standard Browser Label:</strong> Whenever any website reads a local folder through HTML folder selection, Chromium browsers automatically show a confirmation box saying:
               </p>
               <blockquote className="border-l-2 border-brand-400 pl-3 py-1 text-zinc-400 italic text-xs bg-zinc-900/60 rounded-r">
-                "Upload 193 files to this site? This will upload all files from 'Screenshots'..."
+                "Upload files to this site? This will upload all files from..."
               </blockquote>
               <p>
-                <strong>2. Zero network activity:</strong> The browser uses the word <em>"Upload"</em> generically for any local file picker, but <strong>nothing is sent over the internet or uploaded to any server</strong>.
+                <strong>2. Zero network transfer:</strong> Chromium uses the term <em>"Upload"</em> generically for any local file picker, but <strong>zero bytes are uploaded over the internet</strong>.
               </p>
               <p>
-                <strong>3. 100% In-Browser:</strong> All AI classification, thumbnail generation, and sorting runs completely inside your browser tab memory using WebAssembly & WebGPU.
+                <strong>3. 100% In-Browser:</strong> All AI classification, thumbnail extraction, and duplicate detection run directly inside your computer's browser tab using WebAssembly & WebGPU.
               </p>
             </div>
 
@@ -652,7 +660,7 @@ export const App: React.FC = () => {
               onClick={() => setShowSecurityExplainer(false)}
               className="w-full py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-sm font-semibold transition-colors"
             >
-              Understood, Got it!
+              Understood
             </button>
           </div>
         </div>
@@ -660,17 +668,14 @@ export const App: React.FC = () => {
 
       {/* Top Header */}
       <header className="border-b border-surface-border bg-surface/80 backdrop-blur-md sticky top-0 z-30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+        <div className="w-full max-w-[1740px] mx-auto px-4 sm:px-8 xl:px-12 h-16 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-brand-500/20">
               <Sparkles className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="font-bold text-base tracking-tight flex items-center gap-2">
+              <h1 className="font-bold text-base tracking-tight text-white">
                 File Sorter
-                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-brand-900/50 text-brand-300 border border-brand-700/50">
-                  Antigravity AI
-                </span>
               </h1>
               <p className="text-xs text-zinc-400">On-Device AI Downloads & Folder Organizer</p>
             </div>
@@ -714,193 +719,157 @@ export const App: React.FC = () => {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 flex-1 w-full space-y-6">
-        {/* Target Directory & Selection Header */}
-        <div className="text-center space-y-4 py-2">
-          {/* Active Folder Indicator */}
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-surface-card border border-surface-border text-xs text-zinc-300 shadow-md">
-            <FolderOpen className="w-4 h-4 text-brand-400" />
-            <span>Target Directory:</span>
-            <span className="text-zinc-100 font-bold bg-surface px-2.5 py-0.5 rounded border border-surface-border/50">
-              {dirName || 'None selected (Choose a folder below)'}
-            </span>
-            {dirName && appState !== 'scanning' && appState !== 'sorting' && appState !== 'moving' && (
-              <button
-                onClick={handleReset}
-                className="ml-1 text-zinc-400 hover:text-white text-xs underline flex items-center gap-1"
-                title="Change folder"
-              >
-                <RefreshCw className="w-3 h-3" /> Change
-              </button>
-            )}
+      <main className="w-full max-w-[1740px] mx-auto px-4 sm:px-8 xl:px-12 pt-6 flex-1 space-y-6">
+        {/* Error Message */}
+        {errorMessage && (
+          <div className="max-w-xl mx-auto p-3 rounded-xl bg-rose-950/50 border border-rose-800/60 text-rose-300 text-xs sm:text-sm flex items-center gap-2.5 text-left">
+            <AlertCircle className="w-5 h-5 shrink-0 text-rose-400" />
+            <span>{errorMessage}</span>
           </div>
-
-          {/* Error Message */}
-          {errorMessage && (
-            <div className="max-w-xl mx-auto p-3 rounded-xl bg-rose-950/50 border border-rose-800/60 text-rose-300 text-xs sm:text-sm flex items-center gap-2.5 text-left">
-              <AlertCircle className="w-5 h-5 shrink-0 text-rose-400" />
-              <span>{errorMessage}</span>
-            </div>
-          )}
-
-          {/* Action Area */}
-          <div className="space-y-3">
-            {appState === 'idle' && (
-              <div className="space-y-4">
-                {/* Single Unified Main Action Button */}
-                <div className="flex flex-col items-center justify-center gap-3">
-                  <button
-                    onClick={() => handlePickDirectory()}
-                    className="px-8 py-4 rounded-2xl bg-brand-600 hover:bg-brand-500 text-white font-bold flex items-center gap-3 shadow-xl shadow-brand-600/30 transition-all hover:scale-105 active:scale-95 text-base sm:text-lg"
-                  >
-                    <FolderOpen className="w-6 h-6" />
-                    Select Folder to Sort
-                  </button>
-
-                  {/* Quick Folder Shortcuts */}
-                  <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-xs text-zinc-400">
-                    <span className="text-zinc-500">Quick folders:</span>
-                    <button
-                      onClick={() => handlePickDirectory('downloads')}
-                      className="px-3 py-1.5 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
-                    >
-                      📥 Downloads
-                    </button>
-                    <button
-                      onClick={() => handlePickDirectory('desktop')}
-                      className="px-3 py-1.5 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
-                    >
-                      🖥️ Desktop
-                    </button>
-                    <button
-                      onClick={() => handlePickDirectory('documents')}
-                      className="px-3 py-1.5 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
-                    >
-                      📄 Documents
-                    </button>
-                    <button
-                      onClick={() => handlePickDirectory('pictures')}
-                      className="px-3 py-1.5 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
-                    >
-                      🖼️ Pictures
-                    </button>
-                  </div>
-
-                  {/* Subtle Simulation Link */}
-                  <div className="pt-2">
-                    <button
-                      onClick={handleRunDemo}
-                      className="inline-flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 hover:underline transition-colors"
-                    >
-                      <Play className="w-3.5 h-3.5 text-amber-400" />
-                      Or try simulation with sample demo files
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {appState === 'scanning' && (
-              <div className="inline-flex px-6 py-3 rounded-xl bg-surface-card border border-surface-border text-zinc-300 items-center gap-3 animate-pulse">
-                <span className="w-2 h-2 rounded-full bg-brand-400 animate-ping" />
-                Reading folder entries...
-              </div>
-            )}
-
-            {appState === 'sorting' && (
-              <div className="inline-flex px-6 py-3 rounded-xl bg-brand-950/60 border border-brand-800 text-brand-300 items-center gap-3">
-                <Sparkles className="w-5 h-5 animate-spin" />
-                Sorting with Vision AI & Rule Engine...
-              </div>
-            )}
-
-            {appState === 'review' && (
-              <div className="flex flex-wrap items-center justify-center gap-3">
-                <button
-                  onClick={handleExecuteMoves}
-                  className="px-7 py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-2.5 shadow-xl shadow-emerald-600/30 transition-all hover:scale-105 active:scale-95 text-base"
-                >
-                  {dirHandle ? (
-                    <>
-                      <ArrowRight className="w-5 h-5" />
-                      Move {totalLoose} Files to "Sorted/" Folder
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-5 h-5" />
-                      Export Organized ZIP ({totalLoose} Files)
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={handleReset}
-                  className="px-4 py-3.5 rounded-xl bg-surface-card hover:bg-surface-hover border border-surface-border text-zinc-400 hover:text-zinc-200 font-medium text-sm transition-all"
-                >
-                  Cancel / Pick Another Folder
-                </button>
-              </div>
-            )}
-
-            {appState === 'moving' && (
-              <div className="inline-flex px-6 py-3 rounded-xl bg-emerald-950/60 border border-emerald-800 text-emerald-300 items-center gap-3">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                {dirHandle
-                  ? `Moving files: ${moveProgress.done} / ${moveProgress.total}`
-                  : `Creating organized ZIP: ${zipProgress || 0}%`}
-              </div>
-            )}
-
-            {appState === 'done' && (
-              <div className="flex flex-wrap items-center justify-center gap-3">
-                {dirHandle && undoLog && (
-                  <button
-                    onClick={handleUndo}
-                    className="px-5 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
-                  >
-                    <RotateCcw className="w-4 h-4 text-amber-400" />
-                    Undo Moves
-                  </button>
-                )}
-                <button
-                  onClick={handleReset}
-                  className="px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold transition-all hover:scale-105 active:scale-95"
-                >
-                  Sort Another Folder
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Dynamic Status Notification */}
-          {notification && (
-            <p className="text-xs sm:text-sm text-zinc-400 max-w-xl mx-auto flex items-center justify-center gap-2 pt-1">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              {notification}
-            </p>
-          )}
-        </div>
-
-        {/* Stats Bar */}
-        {cards.size > 0 && (
-          <StatsBar
-            looseFiles={totalLoose}
-            photos={totalMedia}
-            foldersCreated={totalFolders}
-            duplicatesFound={totalDupes}
-          />
         )}
 
-        {/* Category Cards Board */}
-        {cards.size > 0 ? (
-          <div className="space-y-8 pt-4">
-            {/* 1. Photos Section */}
-            {photoCards.length > 0 && (
-              <section className="space-y-3">
-                <h2 className="text-sm font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2">
+        {/* 1. IDLE STATE: Initial Hero & Folder Picker */}
+        {appState === 'idle' ? (
+          <div className="space-y-8 py-6">
+            <div className="text-center space-y-3.5">
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-surface-card border border-surface-border text-xs text-zinc-300 shadow-md">
+                <Sparkles className="w-3.5 h-3.5 text-brand-400" />
+                <span>Smart Local Organizer</span>
+              </div>
+              <h2 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white max-w-2xl mx-auto leading-tight">
+                Sort Chaos in <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-400 via-purple-300 to-indigo-400 font-serif italic">Seconds</span>
+              </h2>
+              <p className="text-sm text-zinc-400 max-w-md mx-auto">
+                Fast, private, and 100% on-device. Zero uploads, zero clutter.
+              </p>
+            </div>
+
+            {/* Single Primary Action Button */}
+            <div className="flex flex-col items-center justify-center gap-4">
+              <button
+                onClick={() => handlePickDirectory()}
+                className="px-8 py-4 rounded-2xl bg-brand-600 hover:bg-brand-500 text-white font-bold flex items-center gap-3 shadow-2xl shadow-brand-600/40 transition-all hover:scale-105 active:scale-95 text-base sm:text-lg"
+              >
+                <FolderOpen className="w-6 h-6" />
+                Select Folder to Sort
+              </button>
+
+              {/* Quick Folder Shortcuts */}
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-xs text-zinc-400">
+                <span className="text-zinc-500">Quick folders:</span>
+                <button
+                  onClick={() => handlePickDirectory('downloads')}
+                  className="px-3 py-1.5 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
+                >
+                  📥 Downloads
+                </button>
+                <button
+                  onClick={() => handlePickDirectory('desktop')}
+                  className="px-3 py-1.5 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
+                >
+                  🖥️ Desktop
+                </button>
+                <button
+                  onClick={() => handlePickDirectory('documents')}
+                  className="px-3 py-1.5 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
+                >
+                  📄 Documents
+                </button>
+                <button
+                  onClick={() => handlePickDirectory('pictures')}
+                  className="px-3 py-1.5 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
+                >
+                  🖼️ Pictures
+                </button>
+              </div>
+
+              {/* Simulation Link */}
+              <div className="pt-2">
+                <button
+                  onClick={handleRunDemo}
+                  className="inline-flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 hover:underline transition-colors"
+                >
+                  <Play className="w-3.5 h-3.5 text-amber-400" />
+                  Or try simulation with sample demo files
+                </button>
+              </div>
+
+              {/* Browser Permission Note */}
+              <p className="text-[11px] text-zinc-500 max-w-md text-center pt-1">
+                Folder choose karne ke baad Chrome browser ek security confirmation maangega — uspe <span className="text-zinc-300 font-semibold underline">Upload / Allow</span> dabayein (100% on-device, zero files are sent to any server).
+              </p>
+            </div>
+
+            {/* Dropzone Container */}
+            <div
+              onClick={() => handlePickDirectory()}
+              className="border-2 border-dashed border-surface-border hover:border-brand-500/60 bg-surface-card/30 hover:bg-surface-card/60 rounded-3xl p-8 sm:p-12 text-center max-w-2xl mx-auto space-y-4 cursor-pointer transition-all duration-300"
+            >
+              <div className="w-14 h-14 rounded-2xl bg-surface-border/80 flex items-center justify-center mx-auto text-2xl">
+                📂
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-base font-bold text-zinc-200">
+                  Or drag & drop any folder here
+                </h4>
+                <p className="text-xs text-zinc-400">
+                  Works with any directory on your computer
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* 2. ACTIVE SORTING & REVIEW BOARD: 3-Column Studio Layout */
+          <div className="space-y-6 pt-2">
+            {/* Top Stage Header */}
+            <div className="text-center space-y-1">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface-card border border-surface-border text-xs text-zinc-300 shadow-sm">
+                <FolderOpen className="w-3.5 h-3.5 text-brand-400" />
+                <span>Target:</span>
+                <span className="text-zinc-100 font-bold bg-surface px-2 py-0.5 rounded border border-surface-border/50">
+                  {dirName}
+                </span>
+                {appState !== 'scanning' && appState !== 'sorting' && appState !== 'moving' && (
+                  <button
+                    onClick={handleReset}
+                    className="ml-1 text-zinc-400 hover:text-white text-xs underline flex items-center gap-1"
+                    title="Change folder"
+                  >
+                    <RefreshCw className="w-3 h-3" /> Change
+                  </button>
+                )}
+              </div>
+
+              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
+                Sorting my <span className="text-brand-400 italic font-serif">{dirName}</span> folder
+              </h2>
+
+              {notification && (
+                <p className="text-xs text-zinc-400 flex items-center justify-center gap-1.5 pt-1">
+                  {appState === 'sorting' && <Sparkles className="w-3.5 h-3.5 text-brand-400 animate-spin" />}
+                  {appState === 'review' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
+                  {notification}
+                </p>
+              )}
+            </div>
+
+            {/* Real-time Dynamic Stats Bar */}
+            <StatsBar
+              looseFiles={totalLoose}
+              photos={landedMediaCount}
+              foldersCreated={foldersCreatedCount}
+              duplicatesFound={landedDupesCount}
+            />
+
+            {/* 3-Column Board (Photos | Center Big Vortex Stage | Files) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 xl:gap-8 pt-3 items-start">
+              {/* Left Column: Photos & Videos (3 columns on wide screens) */}
+              <div className="lg:col-span-3 xl:col-span-3 space-y-3.5">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-pink-400 flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-pink-400" />
-                  Photos (Zero-Shot AI Classification)
-                </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
+                  Photos & Videos
+                </h3>
+                <div className="space-y-3">
                   {photoCards.map((c) => (
                     <CategoryCard
                       key={c.key}
@@ -909,18 +878,6 @@ export const App: React.FC = () => {
                       onClick={() => setSelectedCardKey(c.key)}
                     />
                   ))}
-                </div>
-              </section>
-            )}
-
-            {/* 2. Videos Section */}
-            {videoCards.length > 0 && (
-              <section className="space-y-3">
-                <h2 className="text-sm font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-indigo-400" />
-                  Videos & Screen Recordings
-                </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
                   {videoCards.map((c) => (
                     <CategoryCard
                       key={c.key}
@@ -929,18 +886,92 @@ export const App: React.FC = () => {
                       onClick={() => setSelectedCardKey(c.key)}
                     />
                   ))}
+                  {photoCards.length === 0 && videoCards.length === 0 && (
+                    <div className="p-4 rounded-xl border border-dashed border-zinc-800 text-xs text-zinc-500 text-center">
+                      No photos classified yet...
+                    </div>
+                  )}
                 </div>
-              </section>
-            )}
+              </div>
 
-            {/* 3. Non-Media Files Section */}
-            {fileCards.length > 0 && (
-              <section className="space-y-3">
-                <h2 className="text-sm font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2">
+              {/* Middle Column: Big Spacious Central Vortex Stage (6 columns: 50% width) */}
+              <div className="lg:col-span-6 xl:col-span-6 flex flex-col items-center justify-center min-h-[460px] relative pointer-events-auto">
+                <div className="w-80 h-80 sm:w-[420px] sm:h-[420px] xl:w-[480px] xl:h-[480px] rounded-full border border-surface-border/30 bg-surface-card/10 flex flex-col items-center justify-center text-center p-6 relative">
+                  {appState === 'sorting' && (
+                    <div className="text-xs text-zinc-500 italic font-serif mt-56 sm:mt-64 animate-pulse">
+                      swirling loose files in {dirName}...
+                    </div>
+                  )}
+
+                  {appState === 'review' && (
+                    <div className="space-y-3.5 z-30">
+                      <button
+                        onClick={handleExecuteMoves}
+                        className="px-8 py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-2.5 shadow-2xl shadow-emerald-600/40 hover:scale-105 active:scale-95 transition-all text-base sm:text-lg mx-auto"
+                      >
+                        {dirHandle ? (
+                          <>
+                            <ArrowRight className="w-5 h-5" />
+                            Move {totalLoose} Files to "Sorted/"
+                          </>
+                        ) : (
+                          <>
+                            <Download className="w-5 h-5" />
+                            Export Organized ZIP ({totalLoose} Files)
+                          </>
+                        )}
+                      </button>
+                      <button
+                        onClick={handleReset}
+                        className="text-xs text-zinc-400 hover:text-zinc-200 underline block mx-auto transition-colors"
+                      >
+                        Cancel / Pick Another Folder
+                      </button>
+                    </div>
+                  )}
+
+                  {appState === 'moving' && (
+                    <div className="px-6 py-3 rounded-xl bg-emerald-950/80 border border-emerald-800 text-emerald-300 text-sm flex items-center gap-2.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                      {dirHandle
+                        ? `Moving: ${moveProgress.done} / ${moveProgress.total}`
+                        : `Exporting: ${zipProgress || 0}%`}
+                    </div>
+                  )}
+
+                  {appState === 'done' && (
+                    <div className="space-y-3 z-30 text-center">
+                      <div className="text-emerald-400 font-bold text-base flex items-center justify-center gap-2">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                        All files organized!
+                      </div>
+                      {dirHandle && undoLog && (
+                        <button
+                          onClick={handleUndo}
+                          className="px-5 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center gap-1.5 mx-auto transition-colors"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                          Undo Moves
+                        </button>
+                      )}
+                      <button
+                        onClick={handleReset}
+                        className="px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold block mx-auto transition-colors"
+                      >
+                        Sort Another Folder
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column: Files & Documents (3 columns on wide screens) */}
+              <div className="lg:col-span-3 xl:col-span-3 space-y-3.5">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-blue-400 flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-blue-400" />
-                  Documents & Other Files
-                </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
+                  Files & Documents
+                </h3>
+                <div className="space-y-3">
                   {fileCards.map((c) => (
                     <CategoryCard
                       key={c.key}
@@ -949,62 +980,32 @@ export const App: React.FC = () => {
                       onClick={() => setSelectedCardKey(c.key)}
                     />
                   ))}
+                  {fileCards.length === 0 && (
+                    <div className="p-4 rounded-xl border border-dashed border-zinc-800 text-xs text-zinc-500 text-center">
+                      No documents classified yet...
+                    </div>
+                  )}
                 </div>
-              </section>
-            )}
+              </div>
+            </div>
 
-            {/* 4. Duplicates Section */}
+            {/* Bottom Section: Duplicates (Centered at bottom) */}
             {dupeCards.length > 0 && (
-              <section className="space-y-3">
-                <h2 className="text-sm font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2">
+              <div className="max-w-md mx-auto pt-4">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-rose-400 flex items-center justify-center gap-2 mb-2">
                   <span className="w-2 h-2 rounded-full bg-rose-400" />
-                  Duplicate Files (Isolated for Safe Deletion)
-                </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
-                  {dupeCards.map((c) => (
-                    <CategoryCard
-                      key={c.key}
-                      card={c}
-                      itemsMap={items}
-                      onClick={() => setSelectedCardKey(c.key)}
-                    />
-                  ))}
-                </div>
-              </section>
+                  Duplicates → own folder
+                </h3>
+                {dupeCards.map((c) => (
+                  <CategoryCard
+                    key={c.key}
+                    card={c}
+                    itemsMap={items}
+                    onClick={() => setSelectedCardKey(c.key)}
+                  />
+                ))}
+              </div>
             )}
-          </div>
-        ) : (
-          /* Empty State Dropzone */
-          <div
-            onClick={() => handlePickDirectory()}
-            className="border-2 border-dashed border-surface-border hover:border-brand-500/60 bg-surface-card/30 hover:bg-surface-card/60 rounded-3xl p-8 sm:p-12 text-center max-w-2xl mx-auto space-y-6 mt-6 cursor-pointer transition-all duration-300"
-          >
-            <div className="w-16 h-16 rounded-2xl bg-surface-border flex items-center justify-center mx-auto text-3xl">
-              📂
-            </div>
-            <div className="space-y-2">
-              <h3 className="text-xl font-bold text-zinc-100">
-                Click to Select Any Folder or Drag & Drop Here
-              </h3>
-              <p className="text-sm text-zinc-400 max-w-md mx-auto">
-                Select your <strong>Downloads, Desktop, Documents, or any custom folder</strong>. Photos, videos, and files are analyzed 100% on-device with zero server uploads.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 text-left">
-              <div className="p-4 rounded-xl bg-surface/60 border border-surface-border/50 space-y-1">
-                <div className="text-xs font-semibold text-brand-400">1. Any Folder</div>
-                <div className="text-xs text-zinc-400">Not just Downloads. Choose any folder on your hard drive.</div>
-              </div>
-              <div className="p-4 rounded-xl bg-surface/60 border border-surface-border/50 space-y-1">
-                <div className="text-xs font-semibold text-brand-400">2. Local AI Vision</div>
-                <div className="text-xs text-zinc-400">Classifies photos & video frames directly on your GPU.</div>
-              </div>
-              <div className="p-4 rounded-xl bg-surface/60 border border-surface-border/50 space-y-1">
-                <div className="text-xs font-semibold text-brand-400">3. Non-Destructive</div>
-                <div className="text-xs text-zinc-400">Files are safely sorted with full 1-click Undo protection.</div>
-              </div>
-            </div>
           </div>
         )}
       </main>

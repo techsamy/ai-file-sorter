@@ -79,9 +79,9 @@ export const CanvasVortex: React.FC<CanvasVortexProps> = ({
     const controller: VortexController = {
       addSprite: (id, image, totalItems = 50) => {
         if (spritesRef.current.has(id)) return;
-        // Dynamically scale sprite size based on file count so large folders don't look like a solid blob
-        const computedSize = Math.max(26, Math.min(42, Math.round(360 / Math.sqrt(Math.max(20, totalItems)))));
-        const pileRadius = (Math.pow(Math.random(), 0.65) * Math.min(width, height) * 0.14) + 12;
+        // Dynamically scale sprite size based on file count so particles feel large and crisp in the bigger stage
+        const computedSize = Math.max(32, Math.min(50, Math.round(440 / Math.sqrt(Math.max(20, totalItems)))));
+        const pileRadius = (Math.pow(Math.random(), 0.65) * Math.min(width * 0.18, height * 0.22)) + 16;
 
         spritesRef.current.set(id, {
           id,

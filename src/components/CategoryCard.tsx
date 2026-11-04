@@ -54,7 +54,7 @@ export const CategoryCard: React.FC<CategoryCardProps> = ({ card, itemsMap, onCl
             borderColor: `${card.color}40`,
           }}
         >
-          {card.items.length}
+          {card.landed ? card.landed.length : 0}
         </span>
       </div>
 

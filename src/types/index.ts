@@ -39,7 +39,8 @@ export interface CardState {
   color: string;
   dest: string[];
   items: ScannedItem[];
-  slots: (string | null)[]; // ScannedItem ids
+  landed: string[]; // item IDs that have physically arrived and landed
+  slots: (string | null)[]; // ScannedItem ids currently visible in preview slots
   flash?: number;
 }
 
