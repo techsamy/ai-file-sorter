@@ -747,66 +747,56 @@ export const App: React.FC = () => {
           <div className="space-y-3">
             {appState === 'idle' && (
               <div className="space-y-4">
-                {/* Main Action Buttons */}
-                <div className="flex flex-wrap items-center justify-center gap-3">
-                  {/* Option 1: Native or Universal Directory Picker */}
+                {/* Single Unified Main Action Button */}
+                <div className="flex flex-col items-center justify-center gap-3">
                   <button
                     onClick={() => handlePickDirectory()}
-                    className="px-6 py-3.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold flex items-center gap-2.5 shadow-lg shadow-brand-600/30 transition-all hover:scale-105 active:scale-95 text-sm sm:text-base"
+                    className="px-8 py-4 rounded-2xl bg-brand-600 hover:bg-brand-500 text-white font-bold flex items-center gap-3 shadow-xl shadow-brand-600/30 transition-all hover:scale-105 active:scale-95 text-base sm:text-lg"
                   >
-                    <FolderOpen className="w-5 h-5" />
-                    Select Any Folder on Computer
+                    <FolderOpen className="w-6 h-6" />
+                    Select Folder to Sort
                   </button>
 
-                  {/* Option 2: Universal HTML5 Folder Picker */}
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="px-5 py-3.5 rounded-xl bg-surface-card hover:bg-surface-hover border border-surface-border text-zinc-200 hover:text-white font-medium flex items-center gap-2 text-sm transition-all"
-                  >
-                    <Upload className="w-4 h-4 text-brand-400" />
-                    Browse via OS Dialog
-                  </button>
-
-                  {/* Option 3: Simulation Demo */}
-                  <button
-                    onClick={handleRunDemo}
-                    className="px-4 py-3.5 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-700/60 text-zinc-400 hover:text-zinc-200 font-medium flex items-center gap-2 text-xs sm:text-sm transition-all"
-                  >
-                    <Play className="w-3.5 h-3.5 text-amber-400" />
-                    Try Sample Simulation
-                  </button>
-                </div>
-
-                {/* Quick Folder Shortcuts */}
-                {nativeFSSupported && (
+                  {/* Quick Folder Shortcuts */}
                   <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-xs text-zinc-400">
-                    <span className="text-zinc-500">Quick shortcuts:</span>
+                    <span className="text-zinc-500">Quick folders:</span>
                     <button
                       onClick={() => handlePickDirectory('downloads')}
-                      className="px-2.5 py-1 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
+                      className="px-3 py-1.5 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
                     >
                       📥 Downloads
                     </button>
                     <button
                       onClick={() => handlePickDirectory('desktop')}
-                      className="px-2.5 py-1 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
+                      className="px-3 py-1.5 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
                     >
                       🖥️ Desktop
                     </button>
                     <button
                       onClick={() => handlePickDirectory('documents')}
-                      className="px-2.5 py-1 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
+                      className="px-3 py-1.5 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
                     >
                       📄 Documents
                     </button>
                     <button
                       onClick={() => handlePickDirectory('pictures')}
-                      className="px-2.5 py-1 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
+                      className="px-3 py-1.5 rounded-lg bg-surface border border-surface-border hover:border-zinc-500 hover:text-zinc-200 transition-colors"
                     >
                       🖼️ Pictures
                     </button>
                   </div>
-                )}
+
+                  {/* Subtle Simulation Link */}
+                  <div className="pt-2">
+                    <button
+                      onClick={handleRunDemo}
+                      className="inline-flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 hover:underline transition-colors"
+                    >
+                      <Play className="w-3.5 h-3.5 text-amber-400" />
+                      Or try simulation with sample demo files
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
 
