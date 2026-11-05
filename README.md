@@ -1,6 +1,8 @@
 # 📁 File Sorter
 
-An on-device, privacy-preserving AI Downloads & file organizer inspired by Shakir Cheppali's File Sorter ([shakirc.com/file-sorter](https://www.shakirc.com/file-sorter)).
+An on-device, privacy-preserving AI Downloads & folder organizer. Fast, private, and 100% on-device using WebGPU and multimodal vision AI. Zero cloud uploads, zero data tracking.
+
+🌐 **Live Demo:** [https://sorter.samytech.site/](https://sorter.samytech.site/)
 
 ## ✨ Features
 
