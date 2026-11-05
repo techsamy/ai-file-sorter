@@ -28,12 +28,14 @@ npm run dev
 ```
 Open `http://localhost:5173` in Google Chrome, Microsoft Edge, or any Chromium-based browser.
 
-### 3. Production Build
+### 3. Production Build & Auto-Deploy
 ```bash
+# Build locally
 npm run build
-npm run preview
+
+# 1-Command Automated Deploy to aaPanel (sorter.samytech.site)
+npm run deploy
 ```
-Output static files are generated in `dist/`.
 
 ---
 
